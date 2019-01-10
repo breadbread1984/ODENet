@@ -41,21 +41,23 @@ class ODENet(object):
         # 4)aT is gradient of the loss respect to last output, dloss(f(T-1),tilde{f})/df(T-1)
         assert issubclass(type(yt), tf.Tensor) and issubclass(type(t), tf.Tensor) and issubclass(type(aT),tf.Tensor);
         assert len(t.get_shape()) == 1;
-        assert yt.get_shape()[-1] == t.get_shape()[0];
-        assert yt.get_shape()[:-1] == aT.get_shape();
+        assert yt.get_shape()[0] == t.get_shape()[0];
+        assert yt.get_shape()[1:] == aT.get_shape();
         at = aT; #dloss/df(T-1) = dloss(f(T-1),tilde{f})/df(T-1)
         T = int(t.get_shape()[0]);
         sum_dloss_dt = 0;
         dloss_dtheta = tf.zeros(theta.get_shape());
         for i in range(T - 1, 0, -1):
             # -dloss / dt = -df(t) / dt * dloss / df(t) = F(f(t),t,theta) * (-dloss / df(t)) = F(f(t),t,theta) * a(t)
-            dloss_dt = tf.math.reduce_sum(at * self.F(yt[i], t[i], theta));
+            # the real dloss_dt needs one more tf.math.reduce, it is not practiced to fit the dimension requirements of tf.stack
+            dloss_dt = at * self.F(yt[i], t[i], theta);
             # sum_{t=t}^{T-1} dloss / dt
             sum_dloss_dt = sum_dloss_dt - dloss_dt;
             # initial condition [f(t),a(t) = dloss/df(t), a_theta(t), a_t(t)]
             # get augmented func of the previous time [f(t-1), a(t-1), a_theta(t-1), a_t(t-1)]
             aug_ft = tf.stack([yt[i], at, dloss_dtheta, sum_dloss_dt]);
-            aug_ftm1, info = tf.contrib.integrate.odeint(self.aug_F, aug_ft, tf.constant([t[i],t[i-1]]), full_output = True);
+            #NOTE: tensorflow doesnt support odeint with time points given in descending order
+            aug_ftm1 = tf.contrib.integrate.odeint(self.aug_F, aug_ft, [t[i],t[i-1]]);
             _, atm1, dloss_dtheta, sum_dloss_dtm1 = tf.unstack(aug_ftm1[1]);
             # update a(t-1)
             at = atm1;
@@ -64,7 +66,7 @@ class ODENet(object):
 if __name__ == "__main__":
     tf.enable_eager_execution();
     
-    def lorenz(self, ft, t, theta = [28.0, 10.0, 8.0/3.0]):
+    def lorenz(ft, t, theta = [28.0, 10.0, 8.0/3.0]):
         x, y, z = tf.unstack(ft);
         rho, sigma, beta = tf.unstack(theta);
         dx = sigma * (y - x);
@@ -73,9 +75,19 @@ if __name__ == "__main__":
         return tf.stack([dx, dy, dz]);
 
     odenet = ODENet(lorenz);
+    #time points [x_0, ... , x_{T-1}]
     t = tf.constant(np.linspace(0, 10, num = 10), dtype = tf.float32);
-    yt = tf.constant(np.random.normal(size = (3,10)), dtype = tf.float32);
-    aT = tf.constant(np.ones([3]), dtype = tf.float32);
+    #samples [f(x_0), ..., f(x_{T-1})]
+    yt = tf.constant(np.random.normal(size = (10,3)), dtype = tf.float32);
+    #initial loss of the last timepoint -dloss/df(x_{T-1})
+    aT = tf.constant(-np.ones([3]), dtype = tf.float32); #-dloss/df(x) is 3d vector
+    #initial value of trainable parameter
     theta = tf.Variable([28.0, 10.0, 8.0/3.0], dtype = tf.float32);
-    dloss_dtheta = odenet.gradient(yt,t,theta,aT);
-    print(dloss_dtheta);
+    #learning rate
+    lr = 1e-3;
+    #Newton Descend
+    while True:
+        dloss_dtheta = odenet.gradient(yt,t,theta,aT);
+        print(dloss_dtheta);
+        if tf.math.reduce(dloss_dtheta) < 1e-2: break;
+        theta = theta - lr * dloss_dtheta;
