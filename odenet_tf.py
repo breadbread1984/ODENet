@@ -22,9 +22,14 @@ class ODENet(object):
         ft, dloss_dft, _, _ = tf.unstack(aug_ft);
         #get jacobian of F
         with tf.GradientTape() as g:
-            g.watch([ft, t, self.theta]);
+            g.watch([ft, self.theta, t]);
             F = self.F(ft, t, self.theta);
         [dF_dft,dF_dtheta,dF_dt] = g.gradient(F,[ft, self.theta, t]); #dF/df(t),dF/dtheta,dF/dt
+        #gradient tape return none for variable not being present in expression
+        #check out whether the output is none and replace them with zeros
+        if dF_dft is None: dF_dft = tf.zeros_like(ft, dtype = tf.float32);
+        if dF_dtheta is None: dF_dtheta = tf.zeros_like(self.theta, dtype = tf.float32);
+        if dF_dt is None: dF_dt = tf.zeros_like(t, dtype = tf.float32);
         #get d augmented f(t) / dt
         da_dt = -dloss_dft * dF_dft; # da(t)/dt = -a(t)^T * dF/df(t)
         datheta_dt = -dloss_dft * dF_dtheta; # da_theta(t)/dt = -a(t)^T * dF/dtheta
