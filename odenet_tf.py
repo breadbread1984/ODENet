@@ -64,7 +64,7 @@ class ODENet(object):
             #NOTE: tensorflow doesnt support odeint with time points given in descending order
             #df(x0)/dx = int_{x1}^{x0} F(f(x),x,theta) dx   (x0 < x1)  f(x1) is known
             #df(x0)/dx = int_{-x1}^{-x0} -F(f(-z),-z,theta) dz  f(x1) is known
-            aug_ftm1 = tf.contrib.integrate.odeint(lambda ft,t:-self.aug_F(ft,t), aug_ft, [-t[i],-t[i-1]]);
+            aug_ftm1 = tf.contrib.integrate.odeint(lambda ft,t:-self.aug_F(ft,t), aug_ft, [-t[i],-t[i-1]], method = 'dopri5', options = {'max_num_steps': 1e4});
             _, atm1, dloss_dtheta, sum_dloss_dtm1 = tf.unstack(aug_ftm1[1]);
             # update a(t-1)
             at = atm1;
@@ -90,11 +90,12 @@ if __name__ == "__main__":
     yt = tf.constant(np.random.normal(size = (10,3)), dtype = tf.float32);
     #initial loss of the last timepoint -dloss/df(x_{T-1})
     aT = tf.constant(-np.ones([3]), dtype = tf.float32); #-dloss/df(x) is 3d vector
-    #learning rate
-    lr = 1e-3;
     #Newton Descend
+    lr = tf.train.cosine_decay(1e-3, global_step = tf.train.get_or_create_global_step(), decay_steps = 1000);
+    optimizer = tf.train.AdamOptimizer(lr);
     while True:
         dloss_dtheta = odenet.gradient(yt,t,aT);
         print(dloss_dtheta);
         if tf.math.reduce(dloss_dtheta) < 1e-2: break;
-        theta = theta - lr * dloss_dtheta;
+        optimizer.apply_gradients(zip([dloss_dtheta],[theta]), global_step = tf.train.get_global_step());
+
